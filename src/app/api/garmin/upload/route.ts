@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 }
 
 export async function connectGarminClient(email?: string, providedPassword?: string) {
-    let password = providedPassword;
+    let password: string | null | undefined = providedPassword;
     const garminEmail = email || process.env.GARMIN_EMAIL;
     
     if (!password && garminEmail) {
@@ -158,8 +158,8 @@ export async function addRunningWorkout(GCClient: GarminConnect, workoutDataDB: 
     const GCWorkout = await GCClient.createWorkout(workout);
 
     await GCClient.scheduleWorkout(
-        { workoutId: GCWorkout.workoutId }, 
-        scheduleDate
+        { workoutId: String(GCWorkout.workoutId) }, 
+        scheduleDate.toISOString()
     );
 
     console.log(`✅ Scheduled for ${scheduleDate.toISOString().split('T')[0]}`);

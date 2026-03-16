@@ -2,7 +2,7 @@
 
 Welcome to the **Personal Hybrid Training Planner**, created by [Loris Bazzani](https://lorisbaz.github.io/).
 
-This application was born out of frustration with existing fitness apps that lack true personalization and force you to view your training in silos. If you are a hybrid athlete who runs, lifts, and walks, most apps don't give you a unified view. Worse, very few apps allow you to upload custom workouts to your Garmin watch, forcing you to rely on rigid, unadaptable programs
+I created this application because existing fitness apps lack of true personalization and force you to view your training in silos, which I personally found quite rigid and not fulfilling my specific needs. If you are a hybrid athlete who runs, lifts, and walks, most apps don't give you a unified view. Worse, very few apps allow you to upload custom workouts to your Garmin watch, forcing you to rely on rigid, unadaptable programs
 
 This planner leverages the power of AI to build highly personalized, multi-week training plans tailored to your specific goals, schedule, and current fitness level, and lets you push your running workouts directly to Garmin Connect.
 
@@ -23,17 +23,16 @@ This planner leverages the power of AI to build highly personalized, multi-week 
 ### Installation
 
 1. Clone the repository and navigate into the project directory.
-2. Install the dependencies:
+2. Install the dependencies, build and launch the server:
 
 ```bash
 npm install
-# or
-yarn install
-# or
-pnpm install
+npm run build
+npm run start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3. Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Optional Pro Tip: Setup [Tailscale](https://tailscale.com/) to access your local server from your phone or other devices.
 
 
 ## 📚 User Guide
