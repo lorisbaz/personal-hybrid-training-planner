@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Activity, X, Info, Copy, Check, ClipboardPaste, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Activity, X, Info, Copy, Check, ClipboardPaste, ArrowLeft, ArrowRight, Sparkles, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -28,6 +28,14 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
   const [strengthAiOutput, setStrengthAiOutput] = useState('');
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
+  const [provider, setProvider] = useState<'claude' | 'gemini'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('aiProvider') as 'claude' | 'gemini') || 'claude';
+    }
+    return 'claude';
+  });
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     age: '',
@@ -196,6 +204,39 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
     setStep(2);
   };
 
+  const handleAutoGenerate = async (type: 'running' | 'strength') => {
+    const prompt = type === 'running' ? runningPromptPreview : strengthPromptPreview;
+    setIsGenerating(true);
+    setGenerateError(null);
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, provider }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setGenerateError(data.error || 'Generation failed.');
+        return;
+      }
+      const json = JSON.stringify(data, null, 2);
+      if (type === 'running') {
+        setRunningAiOutput(json);
+        setHasCopied(true);
+        setStep(3);
+      } else {
+        setStrengthAiOutput(json);
+        setHasCopied(true);
+        setStep(5);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Network error';
+      setGenerateError(msg);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleFinalSubmit = async (e?: React.FormEvent, skipWarning = false) => {
     if (e) e.preventDefault();
     setJsonError(null);
@@ -336,9 +377,9 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
         <form onSubmit={(e) => {
           e.preventDefault();
           if (step === 1) handleNext(e);
-          else if (step === 2) { setStep(3); setHasCopied(false); setIsCopied(false); }
-          else if (step === 3) { setStep(4); setHasCopied(false); setIsCopied(false); }
-          else if (step === 4) { setStep(5); setHasCopied(false); setIsCopied(false); }
+          else if (step === 2) { setStep(3); setHasCopied(false); setIsCopied(false); setGenerateError(null); }
+          else if (step === 3) { setStep(4); setHasCopied(false); setIsCopied(false); setGenerateError(null); }
+          else if (step === 4) { setStep(5); setHasCopied(false); setIsCopied(false); setGenerateError(null); }
           else handleFinalSubmit(e);
         }} className="space-y-6">
           {step === 1 && (
@@ -532,11 +573,27 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
                     <h2 className="text-xl font-bold text-white mb-2">Running - Copy and paste this text to your favourite AI Assistant</h2>
                     <p className="text-zinc-400 text-sm">Note: we tested the prompt with Gemini; results might differ with other assistants.</p>
                   </div>
-                  <button type="button" onClick={() => handleCopy(runningPromptPreview)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-300 hover:text-white flex items-center gap-2 shrink-0" title="Copy to clipboard">
-                    {isCopied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
-                    <span className="text-sm font-medium">{isCopied ? 'Copied!' : 'Copy Prompt'}</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    <div className="flex rounded-lg overflow-hidden border border-zinc-700">
+                      <button type="button" onClick={() => { setProvider('claude'); localStorage.setItem('aiProvider', 'claude'); }} className={cn("px-3 py-2 text-sm font-medium transition-colors", provider === 'claude' ? "bg-cyan-500/20 text-cyan-300 border-r border-zinc-700" : "bg-zinc-900 text-zinc-500 hover:text-zinc-300 border-r border-zinc-700")}>Claude</button>
+                      <button type="button" onClick={() => { setProvider('gemini'); localStorage.setItem('aiProvider', 'gemini'); }} className={cn("px-3 py-2 text-sm font-medium transition-colors", provider === 'gemini' ? "bg-purple-500/20 text-purple-300" : "bg-zinc-900 text-zinc-500 hover:text-zinc-300")}>Gemini</button>
+                    </div>
+                    <button type="button" onClick={() => handleAutoGenerate('running')} disabled={isGenerating} className={cn("px-4 py-2 rounded-lg transition-colors flex items-center gap-2", isGenerating ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 hover:text-cyan-200")}>
+                      {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                      <span className="text-sm font-medium">{isGenerating ? 'Generating…' : 'Auto-generate'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleCopy(runningPromptPreview)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-300 hover:text-white flex items-center gap-2 shrink-0" title="Copy to clipboard">
+                      {isCopied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
+                      <span className="text-sm font-medium">{isCopied ? 'Copied!' : 'Copy Prompt'}</span>
+                    </button>
+                  </div>
                 </div>
+                {generateError && (
+                  <div className="p-3 bg-red-950/50 border border-red-500/50 rounded-lg text-red-400 text-sm flex items-center gap-2">
+                    <Info size={16} className="shrink-0" />
+                    <span>{generateError}</span>
+                  </div>
+                )}
                 <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
                   <pre className="whitespace-pre-wrap font-sans text-zinc-300 text-sm leading-relaxed">{runningPromptPreview}</pre>
                 </div>
@@ -606,11 +663,27 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
                     <h2 className="text-xl font-bold text-white mb-2">Strength - Copy and paste this text to your favourite AI Assistant</h2>
                     <p className="text-zinc-400 text-sm">Note: we tested the prompt with Gemini; results might differ with other assistants.</p>
                   </div>
-                  <button type="button" onClick={() => handleCopy(strengthPromptPreview)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-300 hover:text-white flex items-center gap-2 shrink-0" title="Copy to clipboard">
-                    {isCopied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
-                    <span className="text-sm font-medium">{isCopied ? 'Copied!' : 'Copy Prompt'}</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    <div className="flex rounded-lg overflow-hidden border border-zinc-700">
+                      <button type="button" onClick={() => { setProvider('claude'); localStorage.setItem('aiProvider', 'claude'); }} className={cn("px-3 py-2 text-sm font-medium transition-colors", provider === 'claude' ? "bg-cyan-500/20 text-cyan-300 border-r border-zinc-700" : "bg-zinc-900 text-zinc-500 hover:text-zinc-300 border-r border-zinc-700")}>Claude</button>
+                      <button type="button" onClick={() => { setProvider('gemini'); localStorage.setItem('aiProvider', 'gemini'); }} className={cn("px-3 py-2 text-sm font-medium transition-colors", provider === 'gemini' ? "bg-purple-500/20 text-purple-300" : "bg-zinc-900 text-zinc-500 hover:text-zinc-300")}>Gemini</button>
+                    </div>
+                    <button type="button" onClick={() => handleAutoGenerate('strength')} disabled={isGenerating} className={cn("px-4 py-2 rounded-lg transition-colors flex items-center gap-2", isGenerating ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 hover:text-purple-200")}>
+                      {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+                      <span className="text-sm font-medium">{isGenerating ? 'Generating…' : 'Auto-generate'}</span>
+                    </button>
+                    <button type="button" onClick={() => handleCopy(strengthPromptPreview)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors text-zinc-300 hover:text-white flex items-center gap-2 shrink-0" title="Copy to clipboard">
+                      {isCopied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
+                      <span className="text-sm font-medium">{isCopied ? 'Copied!' : 'Copy Prompt'}</span>
+                    </button>
+                  </div>
                 </div>
+                {generateError && (
+                  <div className="p-3 bg-red-950/50 border border-red-500/50 rounded-lg text-red-400 text-sm flex items-center gap-2">
+                    <Info size={16} className="shrink-0" />
+                    <span>{generateError}</span>
+                  </div>
+                )}
                 <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
                   <pre className="whitespace-pre-wrap font-sans text-zinc-300 text-sm leading-relaxed">{strengthPromptPreview}</pre>
                 </div>
