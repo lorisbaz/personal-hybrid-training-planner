@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import pool from '../../workouts/db';
 import { getPassword, setPassword } from 'cross-keychain';
 import {
@@ -13,29 +14,37 @@ import {
     WorkoutType
 } from '@flow-js/garmin-connect';
 
+const GarminUploadSchema = z.object({
+    id: z.string().min(1),
+    email: z.string().email().optional(),
+    password: z.string().optional(),
+});
+
 export async function POST(request: Request) {
     try {
-        const { id, email, password } = await request.json();
-        
-        if (!id) {
-            return NextResponse.json({ error: 'Workout ID is required' }, { status: 400 });
+        const body = await request.json();
+        const parsed = GarminUploadSchema.safeParse(body);
+        if (!parsed.success) {
+            return NextResponse.json({ error: 'Invalid request data', details: parsed.error.flatten() }, { status: 400 });
         }
+
+        const { id, email, password } = parsed.data;
 
         const client = await pool.connect();
         let workoutDataDB;
-        
+
         try {
-             const res = await client.query(
-                `SELECT title, workout_date, data 
-                 FROM activities 
-                 WHERE id = $1 AND activity_type = 'RUNNING'`, 
+            const res = await client.query(
+                `SELECT title, workout_date, data
+                 FROM activities
+                 WHERE id = $1 AND activity_type = 'RUNNING'`,
                 [id]
             );
-            
+
             if (res.rows.length === 0) {
                 return NextResponse.json({ error: 'Workout not found or not a running activity' }, { status: 404 });
             }
-            
+
             workoutDataDB = res.rows[0];
         } finally {
             client.release();
@@ -55,7 +64,7 @@ export async function POST(request: Request) {
 export async function connectGarminClient(email?: string, providedPassword?: string) {
     let password: string | null | undefined = providedPassword;
     const garminEmail = email || process.env.GARMIN_EMAIL;
-    
+
     if (!password && garminEmail) {
         try {
             password = await getPassword('garmin-app', garminEmail);
@@ -63,8 +72,7 @@ export async function connectGarminClient(email?: string, providedPassword?: str
             console.warn("Keychain access failed, checking env vars");
         }
     }
-    
-    // Fallback to env var if keychain fails or isn't set
+
     if (!password) {
         password = process.env.GARMIN_PASSWORD;
     }
@@ -82,19 +90,16 @@ export async function connectGarminClient(email?: string, providedPassword?: str
         password: password
     });
 
-    // Try to reuse session tokens to avoid repeated logins
     try {
-        // Note: usage of local file system for tokens works locally but may need adjustment for serverless deployment
-        if (typeof window === 'undefined') { 
-             // Ensure we are on server
-            GCClient.loadTokenByFile('.tokens'); // Uncomment if you want file persistence
+        if (typeof window === 'undefined') {
+            GCClient.loadTokenByFile('.tokens');
         }
     } catch (error) {
         await GCClient.login();
-        GCClient.exportTokenToFile('.tokens');  
+        GCClient.exportTokenToFile('.tokens');
         console.log('Token reuse failed, proceeding to login.');
     }
-    
+
     if (providedPassword) {
         try {
             await setPassword('garmin-app', garminEmail, providedPassword);
@@ -104,15 +109,21 @@ export async function connectGarminClient(email?: string, providedPassword?: str
     }
 
     return GCClient;
-};
+}
 
 export async function addRunningWorkout(GCClient: GarminConnect, workoutDataDB: any) {
-    const scheduleDate = new Date(workoutDataDB.workout_date);
-    scheduleDate.setHours(scheduleDate.getHours()+10) // HACK: since the time start from 11PM, move it to 9AM
-    console.log(scheduleDate)
-    const workoutData = workoutDataDB.data
-    console.log(`Creating and scheduling workout: "${workoutData.workout_name}" for ${scheduleDate.toISOString().split('T')[0]}`);
-    
+    // Build the schedule date using local date methods so the correct calendar day
+    // is used regardless of the machine's UTC offset (avoids the old +10hr hack).
+    // Garmin requires a datetime string, so we append 09:00:00 as a neutral morning time.
+    const d = new Date(workoutDataDB.workout_date);
+    const localDateStr = [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, '0'),
+        String(d.getDate()).padStart(2, '0'),
+    ].join('-');
+    const scheduleDate = `${localDateStr}T09:00:00`;
+    const workoutData = workoutDataDB.data;
+    console.log(`Creating and scheduling workout: "${workoutData.workout_name}" for ${scheduleDate}`);
 
     const wb = new WorkoutBuilder(
         WorkoutType.Running,
@@ -120,7 +131,6 @@ export async function addRunningWorkout(GCClient: GarminConnect, workoutDataDB: 
     );
 
     for (const step of workoutData.steps) {
-        // 1. Map Step Type
         let stepType = StepType.Run;
         const typeMap: Record<string, any> = {
             'WarmUp': StepType.WarmUp,
@@ -133,7 +143,6 @@ export async function addRunningWorkout(GCClient: GarminConnect, workoutDataDB: 
             stepType = typeMap[step.type];
         }
 
-        // 2. Map Duration
         let duration: any = new NoTarget();
         if (step.duration?.type === 'Time') {
             const val = step.duration.value || "00:00:00";
@@ -141,7 +150,6 @@ export async function addRunningWorkout(GCClient: GarminConnect, workoutDataDB: 
             duration = TimeDuration.hhmmss(h, m, s);
         }
 
-        // 3. Map Target
         let target: any = new NoTarget();
         if (step.target?.type === 'Pace') {
             const val = step.target.value || "05:00";
@@ -153,15 +161,15 @@ export async function addRunningWorkout(GCClient: GarminConnect, workoutDataDB: 
 
         wb.addStep(new Step(stepType, duration, target, step.note || ''));
     }
-    
+
     const workout = wb.build();
     const GCWorkout = await GCClient.createWorkout(workout);
 
     await GCClient.scheduleWorkout(
-        { workoutId: String(GCWorkout.workoutId) }, 
-        scheduleDate.toISOString()
+        { workoutId: String(GCWorkout.workoutId) },
+        scheduleDate
     );
 
-    console.log(`✅ Scheduled for ${scheduleDate.toISOString().split('T')[0]}`);
+    console.log(`✅ Scheduled for ${scheduleDate}`);
     return GCWorkout.workoutId;
 }

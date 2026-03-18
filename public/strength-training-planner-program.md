@@ -10,12 +10,17 @@ You must output exclusively a json structure (as defined below). No additional e
     - Improve lower body strength for running 
 
 ## Additional constraints
-- Total duration of training: 8 weeks
+- Total duration of training **must be 8 weeks**
 - Maximum 2 exercises per muscle group. The exercises must remain consistent for the full weeks to allow for measurable progress.
 - Running-specific low body sessions: focus on what helps for running. E.g., prioritize unilateral exercises (e.g., Bulgarian Split Squats, Single-Leg Deadlifts) to fix muscle imbalances and improve running economy. Ensure a 2:1 ratio of pulling (Back/Hamstrings) to pushing (Chest/Quads) movements to maintain posture.
 - You are only allow to change the volume of each set over the weeks, if needed. Use common practices depending of the "strength training targets" defined above.
 - Given the running plan, avoid 'failure' sets. Keep a RPE (Rate of Perceived Exertion) of 7-8.
 - Every session must include at least one 'hinge' or 'pull' movement to balance the repetitive 'push' nature of running.
+
+## Additional constraints
+- I prefer machines (vs. full-body or dumbells)
+- My favourite exercises are: Machine Chest Press;  Dumbbell Flat Bench Press;  Machine Shoulder Press; Cable Rope Triceps Push-Down; Bodyweight Ab Crunch; Machine Lateral Pulldown; Machine Row (Wide Grip); Dumbbell Alternate Biceps Curl; Machine Seated Leg Press; Machine Laying Leg Curl; Machine Seated Leg Extension; Machine Hip Adduction. Try to incorporate them in the plan.
+
 
 ## My health and sport state
 - Age: $AGE

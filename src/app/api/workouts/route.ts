@@ -1,6 +1,7 @@
 // src/app/api/workouts/route.ts
 
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import pool, { initDB } from './db';
 
 // --- Types (Mirrored from frontend for consistency) ---
@@ -23,7 +24,7 @@ interface Workout {
   title: string;
   type: WorkoutType;
   duration: number;
-  date: Date | string; // Date on server, string in JSON
+  date: Date | string;
   completed: boolean;
   skipped?: boolean;
   isRace?: boolean;
@@ -31,29 +32,61 @@ interface Workout {
   exercises?: Exercise[];
 }
 
+// --- Zod Schemas ---
+
+const ExerciseSetSchema = z.object({
+  weight: z.number(),
+  reps: z.number(),
+});
+
+const ExerciseSchema = z.object({
+  name: z.string(),
+  muscleGroup: z.string(),
+  sets: z.array(ExerciseSetSchema),
+  volume: z.number(),
+});
+
+const WorkoutSchema = z.object({
+  id: z.string(),
+  title: z.string().min(1),
+  type: z.enum(['RUNNING', 'STRENGTH', 'WALKING']),
+  duration: z.number().min(0),
+  date: z.string(),
+  completed: z.boolean(),
+  skipped: z.boolean().optional(),
+  isRace: z.boolean().optional(),
+  runningDetails: z.any().optional(),
+  exercises: z.array(ExerciseSchema).optional(),
+});
+
+const WriteWorkoutsSchema = z.array(WorkoutSchema);
+
+const AIWorkoutSchema = z.object({
+  workout_type: z.string(),
+  workout_name: z.string().optional(),
+  scheduled_date: z.string(),
+}).passthrough();
+
+const ImportWorkoutsSchema = z.array(AIWorkoutSchema);
+
 // --- Database Logic ---
 
 async function readDb(): Promise<Workout[]> {
   const res = await pool.query('SELECT * FROM activities ORDER BY workout_date ASC, id ASC');
-  
+
   return res.rows.map(row => {
-    // Handle 'data' column which might be just an array of exercises (from migration) 
     let exercises: Exercise[] | undefined = undefined;
     let runningDetails: any | undefined = undefined;
     let isRace = false;
 
     if (row.activity_type === 'RUNNING') {
-      // For running workouts, the `data` column holds the raw plan object.
-      // We pass this raw object to the frontend via `runningDetails`.
       runningDetails = row.data;
       isRace = (runningDetails?.workout_name || row.title || '').includes('RACE DAY');
     } else if (Array.isArray(row.data)) {
-      // Legacy support for old strength migrations where data was just the exercises array.
       exercises = row.data;
     } else if (row.data && typeof row.data === 'object') {
-      // For STRENGTH/WALKING, data is a wrapped object from previous saves.
       exercises = row.data.exercises;
-      isRace = row.data.isRace; // isRace might be on old strength/walk wrappers
+      isRace = row.data.isRace;
     }
 
     return {
@@ -75,17 +108,13 @@ async function writeDb(data: Workout[]) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Full sync strategy: Clear and Insert. 
-    // This ensures the DB exactly matches the frontend state, handling deletions and re-ordering.
     await client.query('DELETE FROM activities');
 
     for (const w of data) {
       let dataPayload;
       if (w.type === 'RUNNING') {
-        // For running workouts, `runningDetails` holds the raw data object. Write it back.
         dataPayload = w.runningDetails;
       } else {
-        // For other types, construct a wrapper for exercises.
         dataPayload = { exercises: w.exercises };
       }
 
@@ -93,12 +122,12 @@ async function writeDb(data: Workout[]) {
         INSERT INTO activities (title, activity_type, duration_minutes, is_completed, is_skipped, workout_date, total_volume, data)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `, [
-        w.title, 
-        w.type, 
-        w.duration, 
+        w.title,
+        w.type,
+        w.duration,
         w.completed,
         w.skipped,
-        w.date, 
+        w.date,
         w.exercises ? w.exercises.reduce((acc, ex) => acc + ex.volume, 0) : 0,
         JSON.stringify(dataPayload)
       ]);
@@ -116,18 +145,16 @@ async function importAIWorkouts(data: any[]) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // We are generating a brand new plan, so clear existing future plans
-    // Keep past activities (older than today)
     await client.query('DELETE FROM activities WHERE workout_date >= CURRENT_DATE');
-    
+
     let i = 0;
     for (const w of data) {
       const rawType = w.workout_type || 'Unknown';
       const activityType = rawType.toUpperCase();
       const title = w.workout_name || 'Untitled Workout';
-      const workoutDate = w.scheduled_date; // Assumes YYYY-MM-DD
+      const workoutDate = w.scheduled_date;
       const externalId = `gen-${Date.now()}-${i++}`;
-      
+
       let durationMinutes = 0;
       let totalVolume = 0;
       let dataPayload = w;
@@ -148,7 +175,7 @@ async function importAIWorkouts(data: any[]) {
         }
         durationMinutes = Math.round(totalMinutes) || 30;
       } else if (activityType === 'STRENGTH') {
-        durationMinutes = 60; // Default duration for strength
+        durationMinutes = 60;
         if (w.exercises && Array.isArray(w.exercises)) {
           const enrichedExercises = w.exercises.map((ex: any) => {
             let exVolume = 0;
@@ -168,7 +195,7 @@ async function importAIWorkouts(data: any[]) {
 
       await client.query(`
         INSERT INTO activities (
-          external_id, title, activity_type, workout_date, 
+          external_id, title, activity_type, workout_date,
           duration_minutes, is_completed, is_skipped, total_volume, data
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -184,7 +211,7 @@ async function importAIWorkouts(data: any[]) {
         JSON.stringify(dataPayload)
       ]);
     }
-    
+
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
@@ -201,7 +228,6 @@ export async function GET() {
     const workouts = await readDb();
     return NextResponse.json(workouts);
   } catch (error: any) {
-    // If the database or table doesn't exist yet, return an empty array
     if (error.code === '3D000' || error.code === '42P01' || (error.message && error.message.includes('does not exist'))) {
       return NextResponse.json([]);
     }
@@ -214,15 +240,26 @@ export async function POST(request: Request) {
   try {
     await initDB();
     const body = await request.json();
-    
-    if (Array.isArray(body) && body.length > 0 && body[0].workout_type) {
-      await importAIWorkouts(body);
+
+    // Detect AI import vs. regular save based on shape of first item
+    const isAIImport = Array.isArray(body) && body.length > 0 && body[0].workout_type !== undefined;
+
+    if (isAIImport) {
+      const parsed = ImportWorkoutsSchema.safeParse(body);
+      if (!parsed.success) {
+        return NextResponse.json({ error: 'Invalid AI workout data', details: parsed.error.flatten() }, { status: 400 });
+      }
+      await importAIWorkouts(parsed.data);
     } else {
-      await writeDb(body);
+      const parsed = WriteWorkoutsSchema.safeParse(body);
+      if (!parsed.success) {
+        return NextResponse.json({ error: 'Invalid workout data', details: parsed.error.flatten() }, { status: 400 });
+      }
+      await writeDb(parsed.data as Workout[]);
     }
-    
-    const workouts = await readDb(); // Return the fresh state with correct IDs
-    return NextResponse.json(workouts); // Return full list instead of just success
+
+    const workouts = await readDb();
+    return NextResponse.json(workouts);
   } catch (error: any) {
     console.error('Database/API Error:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
