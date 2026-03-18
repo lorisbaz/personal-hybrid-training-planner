@@ -69,6 +69,23 @@ const AIWorkoutSchema = z.object({
 
 const ImportWorkoutsSchema = z.array(AIWorkoutSchema);
 
+// --- Helpers ---
+
+// Single source of truth for volume: always recompute from raw sets.
+// This ensures writeDb and importAIWorkouts produce identical values regardless
+// of what the client sent in the exercise.volume field.
+function computeVolume(exercises: any[]): { exercises: any[]; totalVolume: number } {
+  const enriched = exercises.map(ex => {
+    const volume = (ex.sets ?? []).reduce(
+      (acc: number, s: any) => acc + (Number(s.weight) || 0) * (Number(s.reps) || 0),
+      0
+    );
+    return { ...ex, volume };
+  });
+  const totalVolume = enriched.reduce((acc: number, ex: any) => acc + ex.volume, 0);
+  return { exercises: enriched, totalVolume };
+}
+
 // --- Database Logic ---
 
 async function readDb(): Promise<Workout[]> {
@@ -112,10 +129,15 @@ async function writeDb(data: Workout[]) {
 
     for (const w of data) {
       let dataPayload;
+      let totalVolume = 0;
       if (w.type === 'RUNNING') {
         dataPayload = w.runningDetails;
+      } else if (w.exercises?.length) {
+        const computed = computeVolume(w.exercises);
+        dataPayload = { exercises: computed.exercises };
+        totalVolume = computed.totalVolume;
       } else {
-        dataPayload = { exercises: w.exercises };
+        dataPayload = { exercises: [] };
       }
 
       await client.query(`
@@ -128,7 +150,7 @@ async function writeDb(data: Workout[]) {
         w.completed,
         w.skipped,
         w.date,
-        w.exercises ? w.exercises.reduce((acc, ex) => acc + ex.volume, 0) : 0,
+        totalVolume,
         JSON.stringify(dataPayload)
       ]);
     }
@@ -177,17 +199,9 @@ async function importAIWorkouts(data: any[]) {
       } else if (activityType === 'STRENGTH') {
         durationMinutes = 60;
         if (w.exercises && Array.isArray(w.exercises)) {
-          const enrichedExercises = w.exercises.map((ex: any) => {
-            let exVolume = 0;
-            if (ex.sets && Array.isArray(ex.sets)) {
-              ex.sets.forEach((set: any) => {
-                exVolume += (Number(set.weight) || 0) * (Number(set.reps) || 0);
-              });
-            }
-            return { ...ex, volume: exVolume };
-          });
-          dataPayload = { exercises: enrichedExercises };
-          totalVolume = enrichedExercises.reduce((acc: number, ex: any) => acc + ex.volume, 0);
+          const computed = computeVolume(w.exercises);
+          dataPayload = { exercises: computed.exercises };
+          totalVolume = computed.totalVolume;
         }
       } else if (activityType === 'WALKING') {
         durationMinutes = w.duration || 60;
@@ -228,8 +242,13 @@ export async function GET() {
     const workouts = await readDb();
     return NextResponse.json(workouts);
   } catch (error: any) {
+    // DB/table not yet created — return empty list so the app still loads on first run
     if (error.code === '3D000' || error.code === '42P01' || (error.message && error.message.includes('does not exist'))) {
       return NextResponse.json([]);
+    }
+    // Connection refused — surface a clear message to the UI
+    if (error.code === 'ECONNREFUSED' || error.message?.includes('localhost:5432')) {
+      return NextResponse.json({ error: 'PostgreSQL is not running on localhost:5432. Start it and reload.' }, { status: 503 });
     }
     console.error('Database/API Error:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

@@ -1,4 +1,5 @@
 import { Pool, Client } from 'pg';
+import { migrations } from '@/db/migrations';
 
 const user = process.env.PGUSER || process.env.USER || 'postgres';
 const dbName = `${user}_personal_training_planner`;
@@ -16,7 +17,7 @@ let isInitialized = false;
 export async function initDB() {
   if (isInitialized) return;
 
-  // Connect to the default 'postgres' database to check/create our target database
+  // Ensure the target database exists
   const client = new Client({
     user: user,
     host: 'localhost',
@@ -31,31 +32,49 @@ export async function initDB() {
     if ((res.rowCount ?? 0) === 0) {
       await client.query(`CREATE DATABASE "${dbName}"`);
     }
-  } catch (error) {
+  } catch (error: any) {
+    if (error.code === 'ECONNREFUSED') {
+      throw new Error(`PostgreSQL is not running on localhost:5432. Start it and reload.`);
+    }
+    // Non-connection errors (e.g. permission issues) — log and let migrations attempt
     console.error('Failed to check/create database:', error);
   } finally {
     await client.end();
   }
 
-  // Now create the table in our target database
+  // Run pending migrations
   try {
+    // Bootstrap the migrations tracking table
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS activities (
-          id SERIAL PRIMARY KEY,
-          external_id TEXT UNIQUE,
-          title TEXT NOT NULL,
-          activity_type VARCHAR(50),
-          workout_date TIMESTAMP WITH TIME ZONE,
-          duration_minutes INTEGER,
-          is_completed BOOLEAN DEFAULT FALSE,
-          is_skipped BOOLEAN DEFAULT FALSE,
-          total_volume NUMERIC,
-          data JSONB
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id VARCHAR(10) PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
+
+    const applied = await pool.query('SELECT id FROM schema_migrations');
+    const appliedIds = new Set(applied.rows.map((r: any) => r.id));
+
+    for (const migration of migrations) {
+      if (appliedIds.has(migration.id)) continue;
+
+      console.log(`Running migration ${migration.id}: ${migration.name}`);
+      await pool.query(migration.sql);
+      await pool.query(
+        'INSERT INTO schema_migrations (id, name) VALUES ($1, $2)',
+        [migration.id, migration.name]
+      );
+      console.log(`Migration ${migration.id} applied.`);
+    }
+
     isInitialized = true;
-  } catch (error) {
-    console.error('Failed to create table:', error);
+  } catch (error: any) {
+    if (error.code === 'ECONNREFUSED') {
+      throw new Error(`PostgreSQL is not running on localhost:5432. Start it and reload.`);
+    }
+    console.error('Migration error:', error);
+    throw error;
   }
 }
 

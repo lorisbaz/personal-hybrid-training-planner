@@ -56,13 +56,26 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
   });
 
   useEffect(() => {
-    const saved = localStorage.getItem('userProfile');
-    if (saved) {
+    // Try API first (source of truth), fall back to localStorage cache
+    const loadProfile = async () => {
       try {
-        const parsed = JSON.parse(saved);
-        setFormData(prev => ({ ...prev, ...parsed }));
-      } catch (e) {}
-    }
+        const res = await fetch('/api/profile');
+        if (res.ok) {
+          const profile = await res.json();
+          if (profile) {
+            setFormData(prev => ({ ...prev, ...profile }));
+            localStorage.setItem('userProfile', JSON.stringify(profile));
+            return;
+          }
+        }
+      } catch {}
+      // Fallback: use cached localStorage value
+      const saved = localStorage.getItem('userProfile');
+      if (saved) {
+        try { setFormData(prev => ({ ...prev, ...JSON.parse(saved) })); } catch {}
+      }
+    };
+    loadProfile();
   }, []);
 
   const toggleArrayItem = (field: 'sportHistory' | 'walkDays' | 'strengthDays' | 'strengthTargets', item: string) => {
@@ -284,6 +297,16 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
       }
     }
 
+    // Save to DB (source of truth) and keep localStorage as fast-load cache
+    try {
+      await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+    } catch (err) {
+      console.error('Failed to save profile to server:', err);
+    }
     localStorage.setItem('userProfile', JSON.stringify(formData));
     onComplete();
   };

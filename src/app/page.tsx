@@ -14,7 +14,7 @@ import {
   endOfWeek,
   eachDayOfInterval
 } from 'date-fns';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, AlertTriangle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Workout } from '@/lib/types';
 import Header from '@/components/Header';
@@ -23,12 +23,15 @@ import WeeklyStats from '@/components/WeeklyStats';
 import WorkoutCard from '@/components/WorkoutCard';
 import WorkoutDetailsModal from '@/components/WorkoutDetailsModal';
 import LandingPage from '@/components/LandingPage';
+import ErrorBoundary from '@/components/ErrorBoundary';
+import LoadingSkeleton from '@/components/LoadingSkeleton';
 
 function WorkoutPlanner({ onOpenProfile }: { onOpenProfile: () => void }) {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [showAllFuture, setShowAllFuture] = useState(false);
 
   const saveWorkouts = async (newWorkouts: Workout[]) => {
@@ -55,13 +58,14 @@ function WorkoutPlanner({ onOpenProfile }: { onOpenProfile: () => void }) {
     const fetchWorkouts = async () => {
       try {
         const res = await fetch('/api/workouts');
-        if (!res.ok) throw new Error(`Failed to fetch workouts: ${res.status} ${res.statusText}`);
         const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || `Failed to fetch workouts: ${res.status}`);
         if (!Array.isArray(data)) throw new Error('Invalid data format received from API');
         const parsed = data.map((w: any) => ({ ...w, date: new Date(w.date) }));
         setWorkouts(parsed);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to fetch workouts:', error);
+        setFetchError(error?.message || 'Failed to load workouts. Is PostgreSQL running?');
       } finally {
         setIsMounted(true);
       }
@@ -220,7 +224,25 @@ function WorkoutPlanner({ onOpenProfile }: { onOpenProfile: () => void }) {
       <Header isLoaded={isMounted} onOpenProfile={onOpenProfile} />
 
       <main className={cn("max-w-[1600px] mx-auto p-6", isMounted && "flex flex-col gap-4")}>
-        {!isMounted ? null : (
+        {!isMounted ? (
+          <LoadingSkeleton />
+        ) : fetchError ? (
+          <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
+            <div className="p-3 bg-red-500/10 rounded-full">
+              <AlertTriangle size={32} className="text-red-400" />
+            </div>
+            <div>
+              <p className="text-white font-semibold mb-1">Could not load workouts</p>
+              <p className="text-zinc-500 text-sm font-mono">{fetchError}</p>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg transition-colors text-sm font-medium"
+            >
+              <RefreshCw size={14} /> Retry
+            </button>
+          </div>
+        ) : (
           <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
             {currentWeek && (
               <div>{renderWeekRow(currentWeek, true)}</div>
@@ -275,12 +297,22 @@ function WorkoutPlanner({ onOpenProfile }: { onOpenProfile: () => void }) {
   );
 }
 
-export default function App() {
+function AppInner() {
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    setHasProfile(localStorage.getItem('userProfile') !== null);
+    // Fast path: localStorage cache gives instant answer
+    const cached = localStorage.getItem('userProfile');
+    if (cached) {
+      setHasProfile(true);
+      return;
+    }
+    // No cache — check the DB (handles cleared localStorage)
+    fetch('/api/profile')
+      .then(res => res.json())
+      .then(data => setHasProfile(data !== null))
+      .catch(() => setHasProfile(false));
   }, []);
 
   if (hasProfile === null) return null;
@@ -294,4 +326,12 @@ export default function App() {
     );
   }
   return <WorkoutPlanner onOpenProfile={() => setIsEditing(true)} />;
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
 }
