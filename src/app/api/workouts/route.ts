@@ -98,7 +98,8 @@ async function readDb(): Promise<Workout[]> {
 
     if (row.activity_type === 'RUNNING') {
       runningDetails = row.data;
-      isRace = (runningDetails?.workout_name || row.title || '').includes('RACE DAY');
+      const raceLabel = runningDetails?.workout_name || row.title || '';
+      isRace = raceLabel.includes('RACE DAY') || raceLabel.includes('GOAL RACE');
     } else if (Array.isArray(row.data)) {
       exercises = row.data;
     } else if (row.data && typeof row.data === 'object') {
@@ -163,11 +164,18 @@ async function writeDb(data: Workout[]) {
   }
 }
 
-async function importAIWorkouts(data: any[]) {
+async function importAIWorkouts(data: any[], keepTypes: string[] = []) {
+  const allTypes = ['RUNNING', 'STRENGTH', 'WALKING'];
+  const typesToDelete = allTypes.filter(t => !keepTypes.includes(t));
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM activities WHERE workout_date >= CURRENT_DATE');
+    if (typesToDelete.length > 0) {
+      await client.query(
+        'DELETE FROM activities WHERE workout_date >= CURRENT_DATE AND activity_type = ANY($1)',
+        [typesToDelete]
+      );
+    }
 
     let i = 0;
     for (const w of data) {
@@ -260,6 +268,11 @@ export async function POST(request: Request) {
     await initDB();
     const body = await request.json();
 
+    // Parse keep query param (types to preserve, e.g. ?keep=RUNNING,WALKING)
+    const url = new URL(request.url);
+    const keepParam = url.searchParams.get('keep') || '';
+    const keepTypes = keepParam ? keepParam.split(',').map(t => t.toUpperCase()) : [];
+
     // Detect AI import vs. regular save based on shape of first item
     const isAIImport = Array.isArray(body) && body.length > 0 && body[0].workout_type !== undefined;
 
@@ -268,7 +281,7 @@ export async function POST(request: Request) {
       if (!parsed.success) {
         return NextResponse.json({ error: 'Invalid AI workout data', details: parsed.error.flatten() }, { status: 400 });
       }
-      await importAIWorkouts(parsed.data);
+      await importAIWorkouts(parsed.data, keepTypes);
     } else {
       const parsed = WriteWorkoutsSchema.safeParse(body);
       if (!parsed.success) {

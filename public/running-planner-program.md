@@ -40,7 +40,7 @@ Today is $TODAY_DATE and the race is on $DATE_DATE, giving us a total of $NUMBER
 ### 1. Top-Level Structure (The Workout)
 The root object defines the identity of the session.
 * **`workout_type`**: (String) The activity category. From your snippet: `Running`.
-* **`workout_name`**: (String) A unique identifier or timestamped string.
+* **`workout_name`**: (String) A unique identifier or timestamped string. Note: the day of the race must include "RACE DAY" in the name.
 * **`scheduled_date`**: (String) The date of the workout in format `YYYY-MM-DD`.
 * **`steps`**: (Array) A chronological list of `Step` objects.
 

@@ -36,6 +36,9 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
   });
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [keepRunning, setKeepRunning] = useState(false);
+  const [keepStrength, setKeepStrength] = useState(false);
+  const [keepWalking, setKeepWalking] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     age: '',
@@ -176,32 +179,43 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
         '$HARD_RUN_SESSIONS': formData.hardSessions || '___',
       };
 
-      const runRes = await fetch('/running-planner-program.md');
-      if (runRes.ok) {
-        let runText = await runRes.text();
-        Object.entries(mapping).forEach(([placeholder, value]) => {
-          runText = runText.split(placeholder).join(value);
-        });
-        setRunningPromptPreview(runText);
-      } else {
-        setRunningPromptPreview("Could not load running-planner-program.md. Please make sure it exists in your public folder.");
+      if (!keepRunning) {
+        const runRes = await fetch('/running-planner-program.md');
+        if (runRes.ok) {
+          let runText = await runRes.text();
+          Object.entries(mapping).forEach(([placeholder, value]) => {
+            runText = runText.split(placeholder).join(value);
+          });
+          setRunningPromptPreview(runText);
+        } else {
+          setRunningPromptPreview("Could not load running-planner-program.md. Please make sure it exists in your public folder.");
+        }
       }
 
-      const strRes = await fetch('/strength-training-planner-program.md');
-      if (strRes.ok) {
-        let strText = await strRes.text();
-        Object.entries(mapping).forEach(([placeholder, value]) => {
-          strText = strText.split(placeholder).join(value);
-        });
-        setStrengthPromptPreview(strText);
-      } else {
-        setStrengthPromptPreview("Could not load strength-training-planner-program.md. Please make sure it exists in your public folder.");
+      if (!keepStrength) {
+        const strRes = await fetch('/strength-training-planner-program.md');
+        if (strRes.ok) {
+          let strText = await strRes.text();
+          Object.entries(mapping).forEach(([placeholder, value]) => {
+            strText = strText.split(placeholder).join(value);
+          });
+          setStrengthPromptPreview(strText);
+        } else {
+          setStrengthPromptPreview("Could not load strength-training-planner-program.md. Please make sure it exists in your public folder.");
+        }
       }
     } catch {
       setRunningPromptPreview("Could not load planner programs. Please make sure they exist in your public folder.");
       setStrengthPromptPreview("Could not load planner programs. Please make sure they exist in your public folder.");
     }
-    setStep(2);
+
+    if (keepRunning && keepStrength) {
+      await handleFinalSubmit(undefined);
+    } else if (keepRunning) {
+      setStep(4);
+    } else {
+      setStep(2);
+    }
   };
 
   const handleAutoGenerate = async (type: 'running' | 'strength') => {
@@ -243,7 +257,7 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
 
     let allWorkouts: any[] = [];
 
-    if (runningAiOutput.trim()) {
+    if (!keepRunning && runningAiOutput.trim()) {
       try {
         const runningWorkouts = JSON.parse(runningAiOutput);
         if (!Array.isArray(runningWorkouts)) {
@@ -258,7 +272,7 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
       }
     }
 
-    if (strengthAiOutput.trim()) {
+    if (!keepStrength && strengthAiOutput.trim()) {
       try {
         const strengthWorkouts = JSON.parse(strengthAiOutput);
         if (!Array.isArray(strengthWorkouts)) {
@@ -273,7 +287,7 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
       }
     }
 
-    if (formData.walkDays.length > 0 && allWorkouts.length > 0) {
+    if (!keepWalking && formData.walkDays.length > 0) {
       let startDate = new Date();
       let endDate = new Date();
       endDate.setDate(endDate.getDate() + 8 * 7);
@@ -326,7 +340,9 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
       }
 
       try {
-        await fetch('/api/workouts', {
+        const keepTypes = [keepRunning && 'RUNNING', keepStrength && 'STRENGTH', keepWalking && 'WALKING'].filter(Boolean).join(',');
+        const apiUrl = keepTypes ? `/api/workouts?keep=${keepTypes}` : '/api/workouts';
+        await fetch(apiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(allWorkouts),
@@ -378,7 +394,10 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
           e.preventDefault();
           if (step === 1) handleNext(e);
           else if (step === 2) { setStep(3); setHasCopied(false); setIsCopied(false); setGenerateError(null); }
-          else if (step === 3) { setStep(4); setHasCopied(false); setIsCopied(false); setGenerateError(null); }
+          else if (step === 3) {
+            if (keepStrength) { handleFinalSubmit(e); }
+            else { setStep(4); setHasCopied(false); setIsCopied(false); setGenerateError(null); }
+          }
           else if (step === 4) { setStep(5); setHasCopied(false); setIsCopied(false); setGenerateError(null); }
           else handleFinalSubmit(e);
         }} className="space-y-6">
@@ -554,6 +573,35 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
                 </div>
               </div>
 
+              {/* Plan Options */}
+              <div className="bg-zinc-900/40 border border-zinc-800/50 rounded-2xl p-6 md:p-8 space-y-4 shadow-xl">
+                <h2 className="text-xl font-bold text-white border-b border-zinc-800/50 pb-4">Plan Options</h2>
+                <p className="text-zinc-400 text-sm">Select any plans you want to keep as-is. Unselected plans will be regenerated.</p>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setKeepRunning(v => !v)}
+                    className={cn("px-4 py-2 rounded-lg text-sm font-medium border transition-all", keepRunning ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-300 shadow-[0_0_15px_rgba(34,211,238,0.1)]" : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:border-zinc-700 hover:text-white")}
+                  >
+                    Keep current running plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setKeepStrength(v => !v)}
+                    className={cn("px-4 py-2 rounded-lg text-sm font-medium border transition-all", keepStrength ? "bg-purple-500/20 border-purple-500/50 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.1)]" : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:border-zinc-700 hover:text-white")}
+                  >
+                    Keep current strength plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setKeepWalking(v => !v)}
+                    className={cn("px-4 py-2 rounded-lg text-sm font-medium border transition-all", keepWalking ? "bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.1)]" : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:border-zinc-700 hover:text-white")}
+                  >
+                    Keep current walking plan
+                  </button>
+                </div>
+              </div>
+
               <div className="pt-4 flex justify-between items-center">
                 <button type="button" disabled title="Previous" aria-label="Previous" className="bg-zinc-800 text-zinc-500 px-6 py-4 rounded-xl cursor-not-allowed flex items-center justify-center">
                   <ArrowLeft size={24} />
@@ -648,8 +696,8 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
                 <button type="button" onClick={() => setStep(2)} title="Previous" aria-label="Previous" className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-4 rounded-xl transition-all active:scale-95 flex items-center justify-center">
                   <ArrowLeft size={24} />
                 </button>
-                <button type="submit" disabled={!runningAiOutput.trim()} title="Next" aria-label="Next" className={cn("px-6 py-4 rounded-xl transition-all flex items-center justify-center", runningAiOutput.trim() ? "bg-cyan-500 hover:bg-cyan-400 text-zinc-950 hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(34,211,238,0.3)] hover:shadow-[0_0_30px_rgba(34,211,238,0.5)]" : "bg-zinc-800 text-zinc-500 cursor-not-allowed")}>
-                  <ArrowRight size={24} />
+                <button type="submit" disabled={!runningAiOutput.trim()} title={keepStrength ? 'Finish' : 'Next'} aria-label={keepStrength ? 'Finish' : 'Next'} className={cn("px-6 py-4 rounded-xl transition-all flex items-center gap-2 justify-center", runningAiOutput.trim() ? "bg-cyan-500 hover:bg-cyan-400 text-zinc-950 hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(34,211,238,0.3)] hover:shadow-[0_0_30px_rgba(34,211,238,0.5)]" : "bg-zinc-800 text-zinc-500 cursor-not-allowed")}>
+                  {keepStrength ? <><span className="font-bold">Finish</span><Check size={20} /></> : <ArrowRight size={24} />}
                 </button>
               </div>
             </div>
@@ -689,7 +737,7 @@ const LandingPage = ({ onComplete, onCancel }: { onComplete: () => void; onCance
                 </div>
               </div>
               <div className="pt-4 flex justify-between items-center">
-                <button type="button" onClick={() => setStep(3)} title="Previous" aria-label="Previous" className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-4 rounded-xl transition-all active:scale-95 flex items-center justify-center">
+                <button type="button" onClick={() => keepRunning ? setStep(1) : setStep(3)} title="Previous" aria-label="Previous" className="bg-zinc-800 hover:bg-zinc-700 text-white px-6 py-4 rounded-xl transition-all active:scale-95 flex items-center justify-center">
                   <ArrowLeft size={24} />
                 </button>
                 <button type="submit" disabled={!hasCopied} title="Next" aria-label="Next" className={cn("px-6 py-4 rounded-xl transition-all flex items-center justify-center", hasCopied ? "bg-purple-500 hover:bg-purple-400 text-zinc-950 hover:scale-105 active:scale-95 shadow-[0_0_20px_rgba(168,85,247,0.3)] hover:shadow-[0_0_30px_rgba(168,85,247,0.5)]" : "bg-zinc-800 text-zinc-500 cursor-not-allowed")}>
