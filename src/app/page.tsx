@@ -34,13 +34,21 @@ function WorkoutPlanner({ onOpenProfile }: { onOpenProfile: () => void }) {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [showAllFuture, setShowAllFuture] = useState(false);
 
+  const saveAbortRef = React.useRef<AbortController | null>(null);
+
   const saveWorkouts = async (newWorkouts: Workout[]) => {
+    // Cancel any in-flight save so concurrent calls don't race in the DB
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
+
     setWorkouts(newWorkouts);
     try {
       const res = await fetch('/api/workouts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newWorkouts),
+        signal: controller.signal,
       });
       if (res.ok) {
         const savedWorkouts = await res.json();
@@ -49,8 +57,10 @@ function WorkoutPlanner({ onOpenProfile }: { onOpenProfile: () => void }) {
           setWorkouts(parsed);
         }
       }
-    } catch (error) {
-      console.error('Failed to save workouts:', error);
+    } catch (error: any) {
+      if (error?.name !== 'AbortError') {
+        console.error('Failed to save workouts:', error);
+      }
     }
   };
 

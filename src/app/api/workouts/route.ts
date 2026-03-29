@@ -126,7 +126,7 @@ async function writeDb(data: Workout[]) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('DELETE FROM activities');
+    await client.query('TRUNCATE activities');
 
     for (const w of data) {
       let dataPayload;
